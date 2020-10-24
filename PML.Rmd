@@ -1,0 +1,199 @@
+---
+title: "Practical Machine Learning (RMD)"
+author: "Rahul Das"
+date: "24/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r eval=TRUE, message=FALSE, warning=FALSE, include=FALSE}
+#Set libraries and data
+library(caret); library(ggplot2); library(ggpubr); library(dplyr)
+training <- read.csv("C:/Users/CROMA/Downloads/pml-training.csv")
+testing <- read.csv("C:/Users/CROMA/Downloads/pml-testing.csv")
+```
+
+## Introduction
+This machine learning model, uses data from accelerometers worn on 4 different areas on the body, namely the belt, forearm, arm and dumbbell of 6 participants. These participants were asked to do barbell lifts correctly and incorrectly in 5 different ways. The goal of this model is to predict the ways in which the participants performed these exercises.
+
+### 1. Data Preprocessing
+We will be using the "classe" variable from the WLE training dataset. Classe 'A' represents the correct way to do the exercise. Classe 'B','C','D' and 'E' represent the other four incorrect ways of performing the exercise.
+
+```{r echo=FALSE, fig.align='center', fig.show='asis', message=FALSE, warning=FALSE}
+df <- training %>%
+  group_by(classe) %>%
+  summarise(counts = n())
+bar_classe <- ggplot(df, aes(x = classe, y = counts)) + geom_bar(fill = "lightblue", stat = "identity") + geom_text(aes(label = counts), vjust = -0.3) + theme_pubclean()
+bar_classe
+```
+
+
+This selection process let us with 13 performance measures for every part of the body. 
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+#belt_new_window
+data.frame(training[,12:36])
+#arm_new_window
+data.frame(c(training[,50:59], training[,69:83])))
+#dumbbell_new_window
+data.frame(c(training[,87:101], training[,103:112]))
+#forearm_new_window
+data.frame(c(training[,125:139], training[,141:150])
+          
+training <- training[,-(c(12:36,50:59,69:83,87:101,103:112,125:139,141:150))]
+#60 variables in total
+```
+
+The model recognizes the "new window" and "classe" variables as categorical data, hence we shall convert them to numerical data to avoid problems while predicting and estimation.
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+#Incorrect variable types
+str(c(training$new_window, training$classe)) #Recognized as character
+```
+
+We correct their structure to the real one: "new window" as dummy and "classe" as factor
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+#Changing to the correct variable types
+#New window
+dummies <- dummyVars(classe ~ new_window, data = training)
+dummy <- predict(dummies, newdata = training)
+training$new_window <- dummy[,2]
+#Classe
+training$classe <- as.factor(training$classe)
+str(training$new_window); str(training$classe)
+```
+
+Principal Component Analysis (PCA) will be used to preprocess this data. 
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+M <- abs(cor(training[,7:59]))
+diag(M) <- 0
+which(M > 0.7, arr.ind = TRUE)
+```
+
+The correlations tell us that most of the measurements corresponding to a same part of the body, but not all, are correlated by more than 70%, so their variability could be join by some principal variables that explain most of the performance of a specific part of the body. These variables are the ones that are intended to be approximated by the PCA.
+ 
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+#BELT
+belt <- training[,8:20]; beltpca <- prcomp(belt); belt_pr <- summary(beltpca)
+#ARM
+arm <- training[,21:33]; armpca <- prcomp(arm); arm_pr <- summary(armpca)
+#DUMBBELL
+dumbbell <- training[,34:46]; dumbbellpca <- prcomp(dumbbell); dumbbell_pr <- summary(dumbbellpca)
+#FOREARM
+forearm <- training[,47:59]; forearmpca <- prcomp(forearm); forearm_pr <- summary(forearmpca)
+```
+
+Now, we must observe the importance of every component and select those components that a cumulative proportion of variance equal or greater than 80%.
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+#Belt PCAs importance
+belt_pr$importance[3,]
+#Arm PCAs importance
+arm_pr$importance[3,]
+#Dumbbell PCAs importance
+dumbbell_pr$importance[3,]
+#Forearm PCAs importance
+forearm_pr$importance[3,]
+```
+
+According to the components importance, the first two components of every group explain 80% of the variability of "body part performance", except for the forearm.
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+pr_belt <- data.frame( belt1 = belt_pr$x[,1], belt2 = belt_pr$x[,2])
+pr_arm <- data.frame(arm1 = arm_pr$x[,1], arm2 = arm_pr$x[,2])
+pr_dbel <- data.frame(dbel1 = dumbbell_pr$x[,1], dbel2 = dumbbell_pr$x[,2])
+pr_forearm <- data.frame(forearm1 = forearm_pr$x[,1], forearm2 = forearm_pr$x[,2], forearm3 = forearm_pr$x[,3])
+new_training <- data.frame(new_window = training$new_window, pr_belt, pr_arm, pr_dbel, pr_forearm, classe = training$classe)
+```
+
+### 2. Model Estimation Using Cross-Validation
+We have now preprocessed all data and obtained relevant predictor features. Before choosing an algorithm such as random forest or gradient boosting, we must use cross validation to ensure our data performs well on test data as well. 10 fold cross validation will be used here to obtain optimum results.
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+set.seed(34567)
+#10-fold cross validation
+cross_v <- trainControl(method = "cv", number = 10)
+```
+
+With the cross validation over, we can proceed to using the prediction algorithms on this data.
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+##Random Forest model
+set.seed(5432)
+modfit1 <- train(classe ~., data = new_training, method = "rf", trcontrol = cross_v)
+modfit1
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+## GBM model 
+modfit2 <- train(y = training$classe, x = new_training[,-11], method = "gbm", distribution = "multinomial", trControl = cross_v, verbose = FALSE)
+modfit2
+```
+
+## 3. Predicting on Test Data
+The random forest model when used on training data provides an accuracy score of 96%, while the gradient boosting method provides an 85% accuracy on training data.Hence we shall use the Random Forest model for better accuracy. Before predicting on the 20 observations in the testing data, we must apply the same preprocessing to the testing data as well. Selecting features:
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+testing <- testing[,-(c(12:36,50:59,69:83,87:101,103:112,125:139,141:150))]
+```
+
+Transforming the "new_window" predictor to dummy:
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+testing$new_window[testing$new_window == "no"] <- 0
+testing$new_window[testing$new_window == "yes"] <- 1
+testing$new_window <- as.numeric(testing$new_window)
+```
+
+We predict the PCs for data using the estimated parameters in the training data preprocessing.
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+#belt
+belttest <- predict(beltpca, newdata = testing)
+testpr_belt <- data.frame(belt1 = belttest[,1], belt2 = belttest[,2])
+#arm
+armtest <- predict(armpca, newdata = testing)
+testpr_arm <- data.frame(arm1 = armtest[,1], arm2 = armtest[,2])
+#dumbbell 
+dumbbelltest <- predict(dumbbellpca, newdata = testing)
+testpr_dumbbell <- data.frame(dbel1 = dumbbelltest[,1], dbel2 = dumbbelltest[,2])
+#forearm
+forearmtest <- predict(forearmpca, newdata = testing)
+testpr_forearm <- data.frame(forearm1 = forearmtest[,1], forearm2 = forearmtest[,2], forearm3 = forearmtest[,3] )
+```
+
+Now we use this model to predict the classe variable on the test data. The following results are achieved:
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+new_testing <- data.frame(new_window = testing$new_window, testpr_belt, testpr_arm, testpr_dumbbell, testpr_forearm)
+#Predict with Random Forest model
+rf_pred <- predict(modfit1, newdata = new_testing)
+data.frame(testing$problem_id, rf_pred)
+#Predict with GBM model
+gbm_pred <- predict(modfit2, newdata = new_testing)
+which(rf_pred != gbm_pred, arr.ind = TRUE)
+different <- rf_pred != gbm_pred
+predictions <- data.frame(rf_pred, gbm_pred, different)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+#RF GBM Different?
+#B	A	TRUE		
+#A	A	FALSE		
+#B	A	TRUE		
+#A	A	FALSE		
+#A	A	FALSE		
+#E	E	FALSE		
+#D	D	FALSE		
+#B	B	FALSE		
+#A	A	FALSE		
+#A	A	FALSE
+#B	A	TRUE		
+#C	C	FALSE		
+#B	E	TRUE		
+#A	A	FALSE		
+#E	E	FALSE		
+#E	E	FALSE		
+#A	A	FALSE		
+#B	B	FALSE		
+#B	A	TRUE		
+#B	B	FALSE	
+```
